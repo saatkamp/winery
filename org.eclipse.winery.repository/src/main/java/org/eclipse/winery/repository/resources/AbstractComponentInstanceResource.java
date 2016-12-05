@@ -11,6 +11,8 @@
  *******************************************************************************/
 package org.eclipse.winery.repository.resources;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -49,12 +51,11 @@ import org.eclipse.winery.common.ids.Namespace;
 import org.eclipse.winery.common.ids.XMLId;
 import org.eclipse.winery.common.ids.definitions.TOSCAComponentId;
 import org.eclipse.winery.model.tosca.Definitions;
+import org.eclipse.winery.model.tosca.TDefinitions;
 import org.eclipse.winery.model.tosca.TEntityType;
 import org.eclipse.winery.model.tosca.TExtensibleElements;
 import org.eclipse.winery.model.tosca.TImport;
-import org.eclipse.winery.model.tosca.TNodeType;
 import org.eclipse.winery.model.tosca.TNodeTypeImplementation;
-import org.eclipse.winery.model.tosca.TRelationshipType;
 import org.eclipse.winery.model.tosca.TRelationshipTypeImplementation;
 import org.eclipse.winery.model.tosca.TServiceTemplate;
 import org.eclipse.winery.model.tosca.TTag;
@@ -72,8 +73,6 @@ import org.eclipse.winery.repository.resources.tags.TagsResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.Node;
 import org.xml.sax.ErrorHandler;
 import org.xml.sax.SAXException;
 import org.xml.sax.SAXParseException;
@@ -262,6 +261,25 @@ public abstract class AbstractComponentInstanceResource implements Comparable<Ab
 		}
 		return Utils.getCSARofSelectedResource(this);
 	}
+
+	private StreamingOutput getStreamingOutputForTOSCAXML() {
+		StreamingOutput so = new StreamingOutput() {
+
+			@Override
+			public void write(OutputStream output) throws IOException, WebApplicationException {
+				TOSCAExportUtil exporter = new TOSCAExportUtil();
+				// we include everything related
+				Map<String, Object> conf = new HashMap<>();
+				try {
+					exporter.exportTOSCA(AbstractComponentInstanceResource.this.id, output, conf);
+				} catch (JAXBException e) {
+					throw new WebApplicationException(e);
+				}
+			}
+		};
+
+		return so;
+	}
 	
 	/**
 	 * Returns the definitions of this resource. Includes required imports of
@@ -279,22 +297,46 @@ public abstract class AbstractComponentInstanceResource implements Comparable<Ab
 		if (csar != null) {
 			return Utils.getCSARofSelectedResource(this);
 		}
-		
-		StreamingOutput so = new StreamingOutput() {
-			
-			@Override
-			public void write(OutputStream output) throws IOException, WebApplicationException {
-				TOSCAExportUtil exporter = new TOSCAExportUtil();
-				// we include everything related
-				Map<String, Object> conf = new HashMap<>();
-				try {
-					exporter.exportTOSCA(AbstractComponentInstanceResource.this.id, output, conf);
-				} catch (JAXBException e) {
-					throw new WebApplicationException(e);
-				}
-			}
-		};
-		return Response.ok().type(MediaType.TEXT_XML).entity(so).build();
+
+		return Response.ok().type(MediaType.TEXT_XML).entity(this.getStreamingOutputForTOSCAXML()).build();
+	}
+
+	/**
+	 * Returns the definitions of this resource as JSON. Includes required imports of
+	 * other definitions
+	 */
+	@GET
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response getDefinitionsAsResponse() {
+		if (!Repository.INSTANCE.exists(this.id)) {
+			return Response.status(Status.NOT_FOUND).build();
+		}
+
+		// We cannot just return this.definitions as this.definitions is incomplete
+		// Thus, we have to export the definitions and convert that to JSON
+
+		TOSCAExportUtil exporter = new TOSCAExportUtil();
+		// we include everything related
+		Map<String, Object> conf = new HashMap<>();
+		ByteArrayInputStream in;
+		try {
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			exporter.exportTOSCA(AbstractComponentInstanceResource.this.id, out, conf);
+			byte[] data = out.toByteArray();
+			in = new ByteArrayInputStream(data);
+		} catch (Exception e) {
+			throw new WebApplicationException(e);
+		}
+
+		Unmarshaller um = JAXBSupport.createUnmarshaller();
+		TDefinitions fullDefinitions;
+		try {
+			fullDefinitions = (TDefinitions) um.unmarshal(in);
+		} catch (JAXBException e) {
+			throw new WebApplicationException(e);
+		}
+
+		return Response.ok().entity(fullDefinitions).build();
 	}
 	
 	/**
