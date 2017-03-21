@@ -236,7 +236,7 @@ public class ServiceTemplateResource extends AbstractComponentInstanceWithRefere
 		LOGGER.debug("Persisting...");
 		splitServiceTempateResource.persist();
 		LOGGER.debug("Persisted.");
-		return Utils.getXML(TTopologyTemplate.class, tTopologyTemplate);
+		return Response.noContent().build();
 	}
 
 	/**
